@@ -1,0 +1,79 @@
+{
+  "_comment": "Free-tier agents the orchestrator may use. Limits below are conservative PLACEHOLDERS - check each provider's dashboard and edit them. null means 'no limit tracked'. An agent is used only if its api_key_env variable is set (in .env or your shell), unless it has no api_key_env (local models).",
+  "capability_fallbacks": {
+    "planning": ["code"],
+    "design": ["code"],
+    "copy": ["code"],
+    "debug": ["code"],
+    "code": []
+  },
+  "agents": [
+    {
+      "name": "gemini-flash",
+      "type": "gemini",
+      "model": "gemini-2.5-flash",
+      "api_key_env": "GEMINI_API_KEY",
+      "capabilities": ["planning", "design", "copy", "code", "debug"],
+      "priority": 1,
+      "max_output_tokens": 8192,
+      "limits": { "requests_per_day": 200, "requests_per_minute": 8, "tokens_per_day": null }
+    },
+    {
+      "name": "groq-llama",
+      "type": "openai",
+      "base_url": "https://api.groq.com/openai/v1",
+      "model": "llama-3.3-70b-versatile",
+      "api_key_env": "GROQ_API_KEY",
+      "capabilities": ["planning", "copy", "code", "debug"],
+      "priority": 2,
+      "max_output_tokens": 8000,
+      "limits": { "requests_per_day": 1000, "requests_per_minute": 25, "tokens_per_day": 100000 }
+    },
+    {
+      "name": "cerebras-llama",
+      "type": "openai",
+      "base_url": "https://api.cerebras.ai/v1",
+      "model": "llama-3.3-70b",
+      "api_key_env": "CEREBRAS_API_KEY",
+      "capabilities": ["copy", "code", "debug"],
+      "priority": 3,
+      "max_output_tokens": 8000,
+      "limits": { "requests_per_day": 1000, "requests_per_minute": 25, "tokens_per_day": 1000000 }
+    },
+    {
+      "name": "mistral-small",
+      "type": "openai",
+      "base_url": "https://api.mistral.ai/v1",
+      "model": "mistral-small-latest",
+      "api_key_env": "MISTRAL_API_KEY",
+      "capabilities": ["design", "copy", "code"],
+      "priority": 4,
+      "max_output_tokens": 8000,
+      "limits": { "requests_per_day": 500, "requests_per_minute": 1, "tokens_per_day": null }
+    },
+    {
+      "name": "openrouter-free",
+      "type": "openai",
+      "base_url": "https://openrouter.ai/api/v1",
+      "model": "meta-llama/llama-3.3-70b-instruct:free",
+      "api_key_env": "OPENROUTER_API_KEY",
+      "capabilities": ["planning", "design", "copy", "code", "debug"],
+      "priority": 5,
+      "max_output_tokens": 8000,
+      "limits": { "requests_per_day": 50, "requests_per_minute": 15, "tokens_per_day": null }
+    },
+    {
+      "name": "ollama-local",
+      "type": "openai",
+      "base_url": "http://localhost:11434/v1",
+      "model": "qwen2.5-coder:7b",
+      "api_key_env": null,
+      "local": true,
+      "enabled": false,
+      "capabilities": ["planning", "design", "copy", "code", "debug"],
+      "priority": 99,
+      "max_output_tokens": 8192,
+      "limits": { "requests_per_day": null, "requests_per_minute": null, "tokens_per_day": null }
+    }
+  ]
+}

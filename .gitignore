@@ -3,3 +3,7 @@ node_modules
 package-lock.json
 # Local Netlify folder
 .netlify
+# Orchestrator local state and generated projects
+.orchestrator/
+output/
+__pycache__/

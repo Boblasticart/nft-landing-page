@@ -38,6 +38,7 @@ class Agent:
     enabled: bool = True
     max_output_tokens: int = 4096
     limits: dict = field(default_factory=dict)
+    extra_body: dict = field(default_factory=dict)
 
     @property
     def api_key(self):

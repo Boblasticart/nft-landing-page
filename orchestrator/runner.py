@@ -23,6 +23,12 @@ SYSTEM_PROMPTS = {
 }
 
 NOTE_LIMIT = 8000
+MAX_CONTINUATIONS = 4
+MAX_FIX_ROUNDS = 2
+CONTINUATION_TAIL = 6000
+CONTINUE_PROMPT = ("Your answer was cut off by a length limit. Continue from the exact character where it stopped. "
+                   "Do not repeat anything or restart the file, and add no preamble. Close the open file with "
+                   "=== END FILE ===, then write any remaining files.")
 
 
 class NoCapacity(Exception):
@@ -108,7 +114,7 @@ class Orchestrator:
                     ordered.append((cap, a))
         return ordered
 
-    def call(self, capability, system, prompt, task_id, exclude=()):
+    def call(self, capability, system, prompt, task_id, exclude=(), history=()):
         reasons = {}
         for _ in range(20):
             reasons = {}
@@ -118,7 +124,8 @@ class Orchestrator:
                 if agent.name in exclude:
                     reasons[agent.name] = "already failed this subtask"
                     continue
-                est = providers.estimate_tokens(system + prompt) + agent.max_output_tokens // 2
+                context = system + prompt + "".join(text for _, text in history)
+                est = providers.estimate_tokens(context) + agent.max_output_tokens // 2
                 ok, reason, wait = self.tracker.check(agent, est)
                 if ok:
                     choice = (cap, agent)
@@ -138,7 +145,7 @@ class Orchestrator:
             self.log(f"{task_id}: → {agent.name} [{agent.model}]{via}")
             self.tracker.record_request(agent, task_id)
             try:
-                result = providers.complete(agent, system, prompt)
+                result = providers.complete(agent, system, prompt, history)
             except providers.RateLimited as e:
                 self.tracker.record_error(agent)
                 if e.daily:
@@ -223,6 +230,30 @@ class Orchestrator:
             lines.append("\n--- CURRENT PROJECT FILES ---\n" + (files or "(none yet)"))
         return "\n".join(lines)
 
+    def _complete(self, cap, prompt, tid, exclude):
+        """Call an agent, asking for continuations while a file block is left unterminated by an output cap."""
+        result, agent = self.call(cap, SYSTEM_PROMPTS[cap], prompt, tid, exclude=exclude)
+        text, tokens = result.text, result.tokens
+        for _ in range(MAX_CONTINUATIONS):
+            open_header = assembler.unterminated_header(text)
+            if not open_header:
+                break
+            self.log(f"{tid}: output was cut off inside {open_header.strip()}, requesting continuation")
+            # Hand the partial answer back as the assistant's own turn so the model resumes instead of restarting.
+            history = [("assistant", text[-CONTINUATION_TAIL:]), ("user", CONTINUE_PROMPT)]
+            part, _ = self.call(cap, SYSTEM_PROMPTS[cap], prompt, tid, exclude=exclude, history=history)
+            tokens += part.tokens
+            cont = part.text
+            if not cont.strip():
+                self.log(f"{tid}: continuation came back empty, keeping partial output", "warn")
+                break
+            if cont.lstrip().startswith(open_header.strip()):
+                # The agent restarted the file instead of continuing it; keep the fresh copy.
+                text = text[:text.rindex(open_header)] + cont.lstrip()
+            else:
+                text += cont
+        return providers.Completion(text, tokens), agent
+
     def _run_subtask(self, run, st):
         tid, cap = st["id"], st["capability"]
         entry = run.data["status"][tid]
@@ -231,10 +262,13 @@ class Orchestrator:
         prompt = self._build_prompt(run, st)
         failed = set()
         for _ in range(3):
-            result, agent = self.call(cap, SYSTEM_PROMPTS[cap], prompt, tid, exclude=failed)
+            result, agent = self._complete(cap, prompt, tid, failed)
             files, notes = assembler.parse_files(result.text)
             if cap == "code" and not files:
-                self.log(f"{tid}: {agent.name} returned no files, trying another agent", "warn")
+                raw = run.notes_path(tid).with_suffix(f".{agent.name}.raw.txt")
+                raw.parent.mkdir(parents=True, exist_ok=True)
+                raw.write_text(result.text)
+                self.log(f"{tid}: {agent.name} returned no files (raw output in {raw}), trying another agent", "warn")
                 failed.add(agent.name)
                 continue
             written, rejected = assembler.write_files(run.project_dir, files)
@@ -259,9 +293,7 @@ class Orchestrator:
                  f"qwen2.5-coder:7b`).", "warn")
         print("\a", end="", flush=True)
 
-    def execute(self, run):
-        if not run.data["plan"]:
-            self._plan(run)
+    def _run_pending(self, run):
         status = run.data["status"]
         for st in run.data["plan"]["subtasks"]:
             entry = status[st["id"]]
@@ -279,6 +311,40 @@ class Orchestrator:
                 entry["state"] = "paused"
                 run.save()
                 self._degrade(run, st, e)
+
+    def _add_fix_subtask(self, run, problems):
+        """Queue a code subtask that repairs what the local integrity check found."""
+        n = sum(1 for st in run.data["plan"]["subtasks"] if st["id"].startswith("fix")) + 1
+        st = {"id": f"fix{n}", "title": "Fix integrity problems found by local check", "capability": "code",
+              "depends_on": [], "files": [],
+              "instructions": "A local check of the project found these problems:\n- " + "\n- ".join(problems) +
+                              "\nFix all of them: create missing files (entry points, package.json, configs) or "
+                              "correct the references. For missing images, create a simple SVG placeholder and "
+                              "point the reference at it. Return every file you add or change."}
+        run.data["plan"]["subtasks"].append(st)
+        run.data["status"][st["id"]] = {"state": "pending", "agent": None, "tokens": 0, "files": []}
+        run.save()
+        return st
+
+    def execute(self, run):
+        if not run.data["plan"]:
+            self._plan(run)
+        status = run.data["status"]
+        self._run_pending(run)
+        while all(s["state"] == "done" for s in status.values()):
+            problems = assembler.check_project(run.project_dir)
+            if not problems:
+                self.log("local integrity check passed", "ok")
+                break
+            fixes = sum(1 for sid in status if sid.startswith("fix"))
+            for p in problems:
+                self.log(f"integrity check: {p}", "warn")
+            if fixes >= MAX_FIX_ROUNDS:
+                self.log(f"integrity problems remain after {fixes} fix rounds; review the project by hand", "warn")
+                break
+            st = self._add_fix_subtask(run, problems)
+            self.log(f"queued {st['id']} to repair {len(problems)} problem(s)")
+            self._run_pending(run)
         done = sum(1 for s in status.values() if s["state"] == "done")
         total = len(status)
         if done == total:

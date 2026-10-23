@@ -4,9 +4,11 @@ Runs on your machine and splits any build task ("build me X") across free-tier A
 
 ## Quick start
 
+**No API keys needed to start.** The `pollinations` agent is a free, keyless endpoint. Its anonymous tier allows about one reply every 30 seconds per IP and has a short output cap, so a small site takes roughly 5–10 minutes. Adding free keys makes runs faster and better quality (see below).
+
 ```bash
-cp .env.example .env          # add the API keys you have; leave the rest blank
 python -m orchestrator agents # shows which agents are ready
+cp .env.example .env          # optional: add any free API keys you sign up for
 python -m orchestrator run --dry-run "Portfolio site with dark mode"   # offline test, no API calls
 python -m orchestrator run "Portfolio site with dark mode"             # real run
 python -m orchestrator run                                             # asks you what to build
@@ -29,22 +31,36 @@ The generated project lands in `output/<project-name>/`.
    - 401/403 disables the agent for the session.
    - Other errors try the next agent.
    - A `code` answer with no files is retried on a different agent.
-4. **Assemble:** agents return files as `=== FILE: path ===` blocks, which are written into the project folder. Paths outside the project folder are refused. Design and copy notes are passed on as context to later subtasks.
-5. **Degrade:** when every agent for a capability is out, that subtask is paused and anything depending on it is blocked. You get a terminal alert with three options:
+4. **Continue cut-off answers:** if an output cap cuts a file off mid-way, the partial answer is sent back as the model's own turn and it is asked to continue, up to 4 times.
+5. **Assemble:** agents return files as `=== FILE: path ===` blocks, which are written into the project folder. Paths outside the project folder are refused. Design and copy notes are passed on as context to later subtasks.
+6. **Check locally:** after all subtasks finish, a local check looks for three problems: a missing root `index.html`, local `src`/`href`/`import` references to files that don't exist, and npm packages the code imports but `package.json` doesn't declare. Each problem found queues a `fix` subtask, for up to 2 rounds.
+7. **Degrade:** when every agent for a capability is out, that subtask is paused and anything depending on it is blocked. You get a terminal alert with three options:
    - resume after the daily reset with `python -m orchestrator resume RUN_ID`
    - add a provider key
    - enable the local Ollama fallback
 
 ## Configuring agents
 
-Edit `orchestrator/agents.json`. **The limits there are placeholders.** Check your real free-tier limits in each provider's console, because they change often. Fields:
+Edit `orchestrator/agents.json`. The limits come from public sources in Oct 2026 and are set slightly conservative. Providers change them often, so check each one's console. All of these are free with no credit card:
+
+| agent | get a key |
+|---|---|
+| `gemini-flash` | https://aistudio.google.com/apikey |
+| `groq-llama` | https://console.groq.com/keys |
+| `cerebras-llama` | https://cloud.cerebras.ai |
+| `mistral-small` | https://console.mistral.ai (free "Experiment" plan) |
+| `openrouter-free` | https://openrouter.ai/keys |
+| `pollinations` | none needed; a free key from https://enter.pollinations.ai lifts the limits |
+
+Fields:
 
 | field | meaning |
 |---|---|
 | `type` | `openai` (any OpenAI-compatible endpoint, including Ollama/LM Studio), `gemini` |
 | `capabilities` | subset of `planning, design, copy, code, debug` |
 | `priority` | lower is tried first |
-| `limits` | `requests_per_day`, `requests_per_minute`, `tokens_per_day`; `null` means untracked |
+| `limits` | `requests_per_day`, `requests_per_minute`, `min_interval_seconds`, `tokens_per_day`; `null` means untracked |
+| `extra_body` | extra request fields, e.g. `{"reasoning_effort": "low"}` |
 | `api_key_env` | env var holding the key; `null` for local models |
 | `enabled` | set `false` to skip an agent |
 

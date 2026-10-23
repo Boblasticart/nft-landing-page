@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def _empty_usage():
-    return {"requests": 0, "tokens": 0, "minute": [], "cooldown_until": 0,
+    return {"requests": 0, "tokens": 0, "minute": [], "last_request": 0, "cooldown_until": 0,
             "exhausted": None, "errors": 0, "current_task": None}
 
 
@@ -49,6 +49,10 @@ class QuotaTracker:
             return False, f"not enough daily tokens left ({tpd - u['tokens']} < ~{est_tokens})", None
         if u["cooldown_until"] > now:
             return False, "cooling down", u["cooldown_until"] - now
+        gap = agent.limit("min_interval_seconds")
+        since = now - u.get("last_request", 0)
+        if gap and since < gap:
+            return False, f"min interval ({gap}s)", gap - since
         rpm = agent.limit("requests_per_minute")
         window = [t for t in u["minute"] if now - t < 60]
         u["minute"] = window
@@ -60,6 +64,7 @@ class QuotaTracker:
         u = self.usage(agent.name)
         u["requests"] += 1
         u["minute"].append(time.time())
+        u["last_request"] = time.time()
         u["current_task"] = task_id
         self.save()
 

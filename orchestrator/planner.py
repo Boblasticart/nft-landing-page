@@ -11,6 +11,10 @@ Each subtask needs exactly one capability from: planning, design, copy, code, de
 - copy: all user-facing text as notes
 - code: writes or rewrites specific files
 - debug: reviews existing files and returns fixed versions
+Unless the user explicitly asks for a framework, build a static site in plain HTML, CSS and JavaScript
+that works by opening index.html (at the project root) directly in a browser, with no build step.
+If a framework is requested, the plan must create every file needed to install and run it
+(package.json, entry index.html, configs) and say how to run it in a README.md.
 Keep each code subtask to 1-3 files. Use relative file paths. Put a final debug subtask last.
 Respond with ONLY a JSON object, no prose:
 {"project_name": "kebab-case-name",
